@@ -18,6 +18,7 @@
 llm-followup/
 ├── backend/   # FastAPI та інтеграція з LLM
 ├── frontend/  # React + TypeScript інтерфейс
+├── docker-compose.yml
 └── README.md
 ```
 
@@ -46,7 +47,60 @@ LLM_MODEL=gpt-4o-mini
 Файл `.env` містить секрети й не повинен потрапляти до Git. Для публічного
 репозиторію використовується безпечний шаблон `backend/.env.example`.
 
-## Запуск backend
+## Запуск через Docker
+
+Це рекомендований спосіб запуску застосунку. Потрібні Docker Desktop і
+підтримка Docker Compose.
+
+Переконайся, що файл `backend/.env` створений і містить API-ключ. Якщо файл
+ще не створений, виконай:
+
+```powershell
+cd D:\AIProjects\llm-followup\backend
+Copy-Item .env.example .env
+```
+
+Після цього вкажи реальний ключ у `backend/.env` і запусти команди з кореня
+проєкту:
+
+```powershell
+cd D:\AIProjects\llm-followup
+docker compose up --build
+```
+
+Docker Compose збере та запустить два контейнери:
+
+- `backend` — FastAPI і підключення до LLM;
+- `frontend` — production-збірка React, яку роздає Nginx.
+
+Адреси запущених сервісів:
+
+- frontend: <http://localhost:8080>;
+- backend: <http://localhost:8000>;
+- Swagger-документація: <http://localhost:8000/docs>;
+- health check: <http://localhost:8000/health>.
+
+Щоб запустити контейнери у фоновому режимі:
+
+```powershell
+docker compose up --build -d
+```
+
+Переглянути логи:
+
+```powershell
+docker compose logs -f
+```
+
+Зупинити та видалити контейнери:
+
+```powershell
+docker compose down
+```
+
+## Локальний запуск для розробки
+
+### Backend
 
 Виконай команду з кореня backend:
 
@@ -64,7 +118,7 @@ Backend буде доступний за адресою <http://127.0.0.1:8000>.
 
 <http://127.0.0.1:8000/docs>
 
-## Запуск frontend
+### Frontend
 
 Відкрий друге вікно PowerShell і перейди до frontend:
 
