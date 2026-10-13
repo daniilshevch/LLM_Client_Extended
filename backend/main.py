@@ -1,6 +1,11 @@
+import json
+from collections.abc import Iterator
+
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from openai import OpenAIError
 from pydantic import BaseModel
+from starlette.responses import StreamingResponse
 
 from llm_service import LLMService
 from settings import get_settings
@@ -39,5 +44,30 @@ def chat(request: ChatRequest) -> ChatResponse:
         reply = service.generate_reply(request.message)
     except ValueError as error:
         raise HTTPException(status_code=500, detail=str(error)) from error
+    except (OpenAIError, RuntimeError) as error:
+        raise HTTPException(status_code=502, detail=str(error)) from error
 
     return ChatResponse(reply=reply)
+
+
+def stream_chat_response(message: str) -> Iterator[str]:
+    try:
+        service = LLMService(get_settings())
+        for content in service.generate_reply_stream(message):
+            yield f"data: {json.dumps({'content': content}, ensure_ascii=False)}\n\n"
+        yield "data: [DONE]\n\n"
+    except (OpenAIError, RuntimeError, ValueError) as error:
+        error_data = json.dumps({"error": str(error)}, ensure_ascii=False)
+        yield f"data: {error_data}\n\n"
+
+
+@app.post("/chat/stream")
+def stream_chat(request: ChatRequest) -> StreamingResponse:
+    return StreamingResponse(
+        stream_chat_response(request.message),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )

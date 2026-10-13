@@ -1,3 +1,5 @@
+from collections.abc import Iterator
+
 from openai import OpenAI
 from settings import Settings
 
@@ -24,3 +26,15 @@ class LLMService:
             raise RuntimeError("The LLM returned an empty response")
 
         return reply
+
+    def generate_reply_stream(self, message: str) -> Iterator[str]:
+        stream = self._client.chat.completions.create(
+            model=self._model,
+            messages=[{"role": "user", "content": message}],
+            stream=True,
+        )
+
+        for chunk in stream:
+            content = chunk.choices[0].delta.content
+            if content:
+                yield content
