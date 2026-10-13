@@ -159,6 +159,10 @@
   white-space: pre-wrap;
 }
 
+.streaming-content {
+  min-height: 1.5em;
+}
+
 .message-content pre {
   overflow-x: auto;
   padding: 12px;

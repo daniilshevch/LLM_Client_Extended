@@ -1,9 +1,29 @@
 services:
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_DATABASE: llm_followup
+      MYSQL_USER: llm
+      MYSQL_PASSWORD: llm
+      MYSQL_ROOT_PASSWORD: root
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-proot"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
   backend:
     build:
       context: ./backend
     env_file:
       - ./backend/.env
+    environment:
+      DATABASE_URL: mysql+pymysql://llm:llm@mysql:3306/llm_followup
+    depends_on:
+      mysql:
+        condition: service_healthy
     ports:
       - "8000:8000"
 
@@ -16,3 +36,6 @@ services:
       - backend
     ports:
       - "8080:80"
+
+volumes:
+  mysql_data:

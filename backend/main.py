@@ -1,16 +1,21 @@
 import json
+from uuid import uuid4
 from collections.abc import Iterator
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from openai import OpenAIError
 from pydantic import BaseModel
 from starlette.responses import StreamingResponse
+from sqlalchemy.orm import Session
 
+from database import Base, engine, get_db
 from llm_service import LLMService
+from models import Chat, Message
 from settings import get_settings
 
 app = FastAPI(title="LLM Follow-up")
+Base.metadata.create_all(bind=engine)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -25,6 +30,7 @@ app.add_middleware(
 
 
 class ChatRequest(BaseModel):
+    chat_id: str
     message: str
 
 
@@ -37,11 +43,33 @@ def health_check() -> dict[str, str]:
     return {"status": "ok"}
 
 
+def get_or_create_chat(db: Session, chat_id: str) -> Chat:
+    chat = db.get(Chat, chat_id)
+    if chat is None:
+        chat = Chat(id=chat_id)
+        db.add(chat)
+        db.commit()
+        db.refresh(chat)
+    return chat
+
+
+def build_llm_messages(chat: Chat) -> list[dict[str, str]]:
+    return [
+        {"role": message.role, "content": message.content}
+        for message in chat.messages
+    ]
+
+
 @app.post("/chat", response_model=ChatResponse)
-def chat(request: ChatRequest) -> ChatResponse:
+def chat(request: ChatRequest, db: Session = Depends(get_db)) -> ChatResponse:
     try:
-        service = LLMService(get_settings())
-        reply = service.generate_reply(request.message)
+        chat_session = get_or_create_chat(db, request.chat_id)
+        db.add(Message(chat_id=chat_session.id, role="user", content=request.message))
+        db.commit()
+        db.refresh(chat_session)
+        reply = LLMService(get_settings()).generate_reply(build_llm_messages(chat_session))
+        db.add(Message(chat_id=chat_session.id, role="assistant", content=reply))
+        db.commit()
     except ValueError as error:
         raise HTTPException(status_code=500, detail=str(error)) from error
     except (OpenAIError, RuntimeError) as error:
@@ -50,11 +78,28 @@ def chat(request: ChatRequest) -> ChatResponse:
     return ChatResponse(reply=reply)
 
 
-def stream_chat_response(message: str) -> Iterator[str]:
+def stream_chat_response(
+    chat_id: str, message: str, db: Session
+) -> Iterator[str]:
     try:
+        chat_session = get_or_create_chat(db, chat_id)
+        db.add(Message(chat_id=chat_session.id, role="user", content=message))
+        db.commit()
+        db.refresh(chat_session)
+
+        response_parts: list[str] = []
         service = LLMService(get_settings())
-        for content in service.generate_reply_stream(message):
+        for content in service.generate_reply_stream(build_llm_messages(chat_session)):
+            response_parts.append(content)
             yield f"data: {json.dumps({'content': content}, ensure_ascii=False)}\n\n"
+        db.add(
+            Message(
+                chat_id=chat_session.id,
+                role="assistant",
+                content="".join(response_parts),
+            )
+        )
+        db.commit()
         yield "data: [DONE]\n\n"
     except (OpenAIError, RuntimeError, ValueError) as error:
         error_data = json.dumps({"error": str(error)}, ensure_ascii=False)
@@ -62,9 +107,11 @@ def stream_chat_response(message: str) -> Iterator[str]:
 
 
 @app.post("/chat/stream")
-def stream_chat(request: ChatRequest) -> StreamingResponse:
+def stream_chat(
+    request: ChatRequest, db: Session = Depends(get_db)
+) -> StreamingResponse:
     return StreamingResponse(
-        stream_chat_response(request.message),
+        stream_chat_response(request.chat_id, request.message, db),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

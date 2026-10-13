@@ -15,10 +15,10 @@ class LLMService:
         )
         self._model = settings.llm_model
 
-    def generate_reply(self, message: str) -> str:
+    def generate_reply(self, messages: list[dict[str, str]]) -> str:
         response = self._client.chat.completions.create(
             model=self._model,
-            messages=[{"role": "user", "content": message}],
+            messages=messages,
         )
         reply = response.choices[0].message.content
 
@@ -27,10 +27,10 @@ class LLMService:
 
         return reply
 
-    def generate_reply_stream(self, message: str) -> Iterator[str]:
+    def generate_reply_stream(self, messages: list[dict[str, str]]) -> Iterator[str]:
         stream = self._client.chat.completions.create(
             model=self._model,
-            messages=[{"role": "user", "content": message}],
+            messages=messages,
             stream=True,
         )
 

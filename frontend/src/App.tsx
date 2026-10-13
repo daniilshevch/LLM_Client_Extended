@@ -42,13 +42,31 @@ const createChat = (): ChatSession => ({
 const initialChat = createChat()
 
 function normalizeLatexDelimiters(markdown: string): string {
-  return markdown
+  const normalized = markdown
+    .replace(/\\\$/g, '$')
+    .replace(/\\#/g, '#')
     .replace(/\\\[([\s\S]*?)\\\]/g, (_match, formula: string) => {
       return `$$\n${formula.trim()}\n$$`
     })
     .replace(/\\\(([\s\S]*?)\\\)/g, (_match, formula: string) => {
       return `$${formula}$`
     })
+
+  return normalized
+    .split('\n')
+    .map((line) => {
+      const trimmed = line.trim()
+      const looksLikeBareLatex =
+        trimmed.length > 0 &&
+        !trimmed.startsWith('```') &&
+        !trimmed.startsWith('$$') &&
+        !trimmed.includes('$') &&
+        /(?:\\(?:frac|sqrt|sin|cos|tan|cot|circ|cdot)|\^|_)/.test(trimmed) &&
+        /^(?:[A-Za-zА-Яа-я]\s*=|\\[a-z]+|[A-Za-zА-Яа-я]\s*\^)/.test(trimmed)
+
+      return looksLikeBareLatex ? `$$\n${trimmed}\n$$` : line
+    })
+    .join('\n')
 }
 
 function App() {
@@ -116,7 +134,7 @@ function App() {
           'Content-Type': 'application/json',
           'Cache-Control': 'no-cache',
         },
-        body: JSON.stringify({ message }),
+        body: JSON.stringify({ chat_id: activeChat.id, message }),
       })
 
       if (!response.ok) {
@@ -281,7 +299,8 @@ function App() {
                   {message.role === 'user' ? 'Ти' : 'AI'}
                 </span>
                 <div className="message-content">
-                  {message.role === 'assistant' ? (
+                  {message.role === 'assistant' &&
+                  !(isLoading && index === activeChat.messages.length - 1) ? (
                     <ReactMarkdown
                       remarkPlugins={[remarkMath]}
                       rehypePlugins={[rehypeKatex]}
@@ -289,7 +308,7 @@ function App() {
                       {normalizeLatexDelimiters(message.content)}
                     </ReactMarkdown>
                   ) : (
-                    <p>{message.content}</p>
+                    <p className="streaming-content">{message.content}</p>
                   )}
                 </div>
               </article>
