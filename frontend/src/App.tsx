@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { FormEvent } from 'react'
 import {
   Button,
@@ -31,6 +31,11 @@ type ChatSession = {
   id: string
   title: string
   messages: Message[]
+}
+
+type ChatHistoryResponse = ChatSession & {
+  created_at: string
+  updated_at: string
 }
 
 const createChat = (): ChatSession => ({
@@ -70,10 +75,39 @@ function normalizeLatexDelimiters(markdown: string): string {
 }
 
 function App() {
-  const [sessions, setSessions] = useState<ChatSession[]>([initialChat])
+  const [sessions, setSessions] = useState<ChatSession[]>([])
   const [activeChatId, setActiveChatId] = useState(initialChat.id)
   const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
+  const [isLoadingHistory, setIsLoadingHistory] = useState(true)
+
+  useEffect(() => {
+    async function loadHistory() {
+      try {
+        const response = await fetch(`${API_URL}/chats`)
+        if (!response.ok) {
+          throw new Error(`History request failed with status ${response.status}`)
+        }
+
+        const history: ChatHistoryResponse[] = await response.json()
+        if (history.length > 0) {
+          setSessions(history)
+          setActiveChatId(history[0].id)
+        } else {
+          setSessions([initialChat])
+          setActiveChatId(initialChat.id)
+        }
+      } catch (error) {
+        console.error('Failed to load chat history', error)
+        setSessions([initialChat])
+        setActiveChatId(initialChat.id)
+      } finally {
+        setIsLoadingHistory(false)
+      }
+    }
+
+    void loadHistory()
+  }, [])
 
   const activeChat = useMemo(
     () => sessions.find((session) => session.id === activeChatId),
@@ -94,6 +128,16 @@ function App() {
   }
 
   function deleteChat(chatId: string) {
+    void fetch(`${API_URL}/chats/${chatId}`, { method: 'DELETE' }).then(
+      (response) => {
+        if (!response.ok && response.status !== 404) {
+          throw new Error(`Delete request failed with status ${response.status}`)
+        }
+      },
+    ).catch((error: unknown) => {
+      console.error('Failed to delete chat', error)
+    })
+
     setSessions((current) => {
       const remaining = current.filter((chat) => chat.id !== chatId)
       if (remaining.length === 0) {
@@ -113,7 +157,7 @@ function App() {
     event.preventDefault()
     const message = input.trim()
 
-    if (!message || isLoading || !activeChat) {
+    if (!message || isLoading || isLoadingHistory || !activeChat) {
       return
     }
 
@@ -251,7 +295,7 @@ function App() {
             renderItem={(chat) => (
               <List.Item
                 className={chat.id === activeChatId ? 'active-chat' : ''}
-                onClick={() => !isLoading && setActiveChatId(chat.id)}
+                onClick={() => !isLoading && !isLoadingHistory && setActiveChatId(chat.id)}
               >
                 <MessageOutlined />
                 <span className="chat-title">{chat.title}</span>
@@ -284,12 +328,14 @@ function App() {
 
         <Layout.Content className="chat-content">
           <div className="messages" aria-live="polite">
-            {!activeChat?.messages.length && (
+            {isLoadingHistory ? (
+              <Typography.Text type="secondary">Завантаження історії...</Typography.Text>
+            ) : !activeChat?.messages.length ? (
               <Empty
                 image={Empty.PRESENTED_IMAGE_SIMPLE}
                 description="Тут з&apos;явиться історія діалогу"
               />
-            )}
+            ) : null}
             {activeChat?.messages.map((message, index) => (
               <article
                 className={`message ${message.role}`}

@@ -1,13 +1,14 @@
 import json
-from uuid import uuid4
 from collections.abc import Iterator
+from datetime import datetime
 
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from openai import OpenAIError
 from pydantic import BaseModel
 from starlette.responses import StreamingResponse
-from sqlalchemy.orm import Session
+from sqlalchemy import delete, select
+from sqlalchemy.orm import Session, selectinload
 
 from database import Base, engine, get_db
 from llm_service import LLMService
@@ -38,6 +39,24 @@ class ChatResponse(BaseModel):
     reply: str
 
 
+class MessageResponse(BaseModel):
+    role: str
+    content: str
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class ChatHistoryResponse(BaseModel):
+    id: str
+    title: str
+    created_at: datetime
+    updated_at: datetime
+    messages: list[MessageResponse]
+
+    model_config = {"from_attributes": True}
+
+
 @app.get("/health")
 def health_check() -> dict[str, str]:
     return {"status": "ok"}
@@ -60,10 +79,33 @@ def build_llm_messages(chat: Chat) -> list[dict[str, str]]:
     ]
 
 
+@app.get("/chats", response_model=list[ChatHistoryResponse])
+def get_chats(db: Session = Depends(get_db)) -> list[Chat]:
+    statement = (
+        select(Chat)
+        .options(selectinload(Chat.messages))
+        .order_by(Chat.updated_at.desc())
+    )
+    return list(db.scalars(statement).all())
+
+
+@app.delete("/chats/{chat_id}", status_code=204)
+def delete_chat(chat_id: str, db: Session = Depends(get_db)) -> None:
+    chat = db.get(Chat, chat_id)
+    if chat is None:
+        raise HTTPException(status_code=404, detail="Chat not found")
+
+    db.delete(chat)
+    db.commit()
+
+
 @app.post("/chat", response_model=ChatResponse)
 def chat(request: ChatRequest, db: Session = Depends(get_db)) -> ChatResponse:
     try:
         chat_session = get_or_create_chat(db, request.chat_id)
+        if not chat_session.messages:
+            chat_session.title = request.message[:255]
+        chat_session.updated_at = datetime.utcnow()
         db.add(Message(chat_id=chat_session.id, role="user", content=request.message))
         db.commit()
         db.refresh(chat_session)
@@ -83,6 +125,9 @@ def stream_chat_response(
 ) -> Iterator[str]:
     try:
         chat_session = get_or_create_chat(db, chat_id)
+        if not chat_session.messages:
+            chat_session.title = message[:255]
+        chat_session.updated_at = datetime.utcnow()
         db.add(Message(chat_id=chat_session.id, role="user", content=message))
         db.commit()
         db.refresh(chat_session)
